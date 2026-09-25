@@ -1,141 +1,194 @@
 #include <stdio.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "driver/gpio.h"
 #include "esp_adc/adc_oneshot.h"
+#include "driver/i2c.h"
 #include "esp_timer.h"
 #include "rom/ets_sys.h"
 
 #define DHT_PIN GPIO_NUM_15
-#define LDR_CHANNEL ADC_CHANNEL_6 // GPIO 34 on ADC1
+#define LDR_CHANNEL ADC_CHANNEL_6
+#define I2C_MASTER_NUM I2C_NUM_0
+#define OLED_ADDR 0x3C
 
-// 1. Define the Data Structure
 typedef struct {
     float temperature;
     float humidity;
     int light_percent;
 } SensorData;
 
-// 2. Declare the Queue Handle globally
 QueueHandle_t sensor_queue;
 
-static int wait_for_state(int state, int timeout_us) {
-    int64_t start_time = esp_timer_get_time();
-    while (gpio_get_level(DHT_PIN) != state) {
-        if ((esp_timer_get_time() - start_time) > timeout_us) {
-            return -1;
-        }
-    }
-    return (int)(esp_timer_get_time() - start_time);
+// ==========================================
+// COMPACT 5x8 FONT (ASCII 32 to 127)
+// ==========================================
+static const uint8_t font[96][5] = {
+{0x00,0x00,0x00,0x00,0x00},{0x00,0x00,0x5F,0x00,0x00},{0x00,0x07,0x00,0x07,0x00},{0x14,0x7F,0x14,0x7F,0x14},{0x24,0x2A,0x7F,0x2A,0x12},{0x23,0x13,0x08,0x64,0x62},{0x36,0x49,0x55,0x22,0x50},{0x00,0x05,0x03,0x00,0x00},{0x00,0x1C,0x22,0x41,0x00},{0x00,0x41,0x22,0x1C,0x00},{0x14,0x08,0x3E,0x08,0x14},{0x08,0x08,0x3E,0x08,0x08},{0x00,0x50,0x30,0x00,0x00},{0x08,0x08,0x08,0x08,0x08},{0x00,0x60,0x60,0x00,0x00},{0x20,0x10,0x08,0x04,0x02},
+{0x3E,0x51,0x49,0x45,0x3E},{0x00,0x42,0x7F,0x40,0x00},{0x42,0x61,0x51,0x49,0x46},{0x21,0x41,0x45,0x4B,0x31},{0x18,0x14,0x12,0x7F,0x10},{0x27,0x45,0x45,0x45,0x39},{0x3C,0x4A,0x49,0x49,0x30},{0x01,0x71,0x09,0x05,0x03},{0x36,0x49,0x49,0x49,0x36},{0x06,0x49,0x49,0x29,0x1E},{0x00,0x36,0x36,0x00,0x00},{0x00,0x56,0x36,0x00,0x00},{0x08,0x14,0x22,0x41,0x00},{0x14,0x14,0x14,0x14,0x14},{0x00,0x41,0x22,0x14,0x08},{0x02,0x01,0x51,0x09,0x06},
+{0x32,0x49,0x79,0x41,0x3E},{0x7E,0x11,0x11,0x11,0x7E},{0x7F,0x49,0x49,0x49,0x36},{0x3E,0x41,0x41,0x41,0x22},{0x7F,0x41,0x41,0x22,0x1C},{0x7F,0x49,0x49,0x49,0x41},{0x7F,0x09,0x09,0x09,0x01},{0x3E,0x41,0x49,0x49,0x7A},{0x7F,0x08,0x08,0x08,0x7F},{0x00,0x41,0x7F,0x41,0x00},{0x20,0x40,0x41,0x3F,0x01},{0x7F,0x08,0x14,0x22,0x41},{0x7F,0x40,0x40,0x40,0x40},{0x7F,0x02,0x0C,0x02,0x7F},{0x7F,0x04,0x08,0x10,0x7F},{0x3E,0x41,0x41,0x41,0x3E},
+{0x7F,0x09,0x09,0x09,0x06},{0x3E,0x41,0x51,0x21,0x5E},{0x7F,0x09,0x19,0x29,0x46},{0x46,0x49,0x49,0x49,0x31},{0x01,0x01,0x7F,0x01,0x01},{0x3F,0x40,0x40,0x40,0x3F},{0x1F,0x20,0x40,0x20,0x1F},{0x3F,0x40,0x38,0x40,0x3F},{0x63,0x14,0x08,0x14,0x63},{0x07,0x08,0x70,0x08,0x07},{0x61,0x51,0x49,0x45,0x43},{0x00,0x7F,0x41,0x41,0x00},{0x02,0x04,0x08,0x10,0x20},{0x00,0x41,0x41,0x7F,0x00},{0x04,0x02,0x01,0x02,0x04},{0x40,0x40,0x40,0x40,0x40},
+{0x00,0x01,0x02,0x04,0x00},{0x20,0x54,0x54,0x54,0x78},{0x7F,0x48,0x44,0x44,0x38},{0x38,0x44,0x44,0x44,0x20},{0x38,0x44,0x44,0x48,0x7F},{0x38,0x54,0x54,0x54,0x18},{0x08,0x7E,0x09,0x01,0x02},{0x08,0x14,0x54,0x54,0x3C},{0x7F,0x08,0x04,0x04,0x78},{0x00,0x44,0x7D,0x40,0x00},{0x20,0x40,0x44,0x3D,0x00},{0x7F,0x10,0x28,0x44,0x00},{0x00,0x41,0x7F,0x40,0x00},{0x7C,0x04,0x18,0x04,0x78},{0x7C,0x08,0x04,0x04,0x78},{0x38,0x44,0x44,0x44,0x38},
+{0x7C,0x14,0x14,0x14,0x08},{0x08,0x14,0x14,0x18,0x7C},{0x7C,0x08,0x04,0x04,0x08},{0x48,0x54,0x54,0x54,0x20},{0x04,0x3F,0x44,0x40,0x20},{0x3C,0x40,0x40,0x20,0x7C},{0x1C,0x20,0x40,0x20,0x1C},{0x3C,0x40,0x30,0x40,0x3C},{0x44,0x28,0x10,0x28,0x44},{0x0C,0x50,0x50,0x50,0x3C},{0x44,0x64,0x54,0x4C,0x44},{0x00,0x08,0x36,0x41,0x00},{0x00,0x00,0x7F,0x00,0x00},{0x00,0x41,0x36,0x08,0x00},{0x10,0x08,0x08,0x10,0x08},{0x78,0x46,0x41,0x46,0x78}
+};
+
+// ==========================================
+// NATIVE I2C OLED DRIVER
+// ==========================================
+void oled_cmd(uint8_t cmd) {
+    uint8_t data[2] = {0x00, cmd};
+    i2c_master_write_to_device(I2C_MASTER_NUM, OLED_ADDR, data, 2, pdMS_TO_TICKS(100));
 }
 
-static bool read_dht22(float *temperature, float *humidity) {
-    uint8_t data[5] = {0};
+void oled_data(uint8_t data) {
+    uint8_t payload[2] = {0x40, data};
+    i2c_master_write_to_device(I2C_MASTER_NUM, OLED_ADDR, payload, 2, pdMS_TO_TICKS(100));
+}
 
+void oled_init() {
+    i2c_config_t conf = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = 21,
+        .scl_io_num = 22,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = 400000,
+    };
+    i2c_param_config(I2C_MASTER_NUM, &conf);
+    i2c_driver_install(I2C_MASTER_NUM, conf.mode, 0, 0, 0);
+
+    uint8_t cmds[] = {
+        0xAE,       // Display OFF
+        0x20, 0x02, // Set Page Addressing Mode
+        0xA1,       // Set Segment Remap (Flips horizontally)
+        0xC8,       // Set COM Scan Direction (Flips vertically)
+        0x8D, 0x14, // Enable charge pump
+        0xAF        // Display ON
+    };
+    for (int i = 0; i < sizeof(cmds); i++) oled_cmd(cmds[i]);
+}
+
+void oled_set_cursor(uint8_t col, uint8_t page) {
+    oled_cmd(0xB0 | page);
+    oled_cmd(0x00 | (col & 0x0F));
+    oled_cmd(0x10 | ((col >> 4) & 0x0F));
+}
+
+void oled_clear() {
+    for (int p = 0; p < 8; p++) {
+        oled_set_cursor(0, p);
+        for (int c = 0; c < 128; c++) oled_data(0x00);
+    }
+}
+
+void oled_print(uint8_t col, uint8_t page, const char *str) {
+    oled_set_cursor(col, page);
+    while (*str) {
+        int idx = *str - 32;
+        if (idx >= 0 && idx < 96) {
+            for (int i = 0; i < 5; i++) oled_data(font[idx][i]);
+            oled_data(0x00); // 1 pixel spacing between letters
+        }
+        str++;
+    }
+}
+
+// ==========================================
+// DHT22 SENSOR DRIVER
+// ==========================================
+static int wait_for_state(int state, int timeout_us) {
+    int64_t start = esp_timer_get_time();
+    while (gpio_get_level(DHT_PIN) != state) {
+        if ((esp_timer_get_time() - start) > timeout_us) return -1;
+    }
+    return (int)(esp_timer_get_time() - start);
+}
+
+static bool read_dht22(float *temp, float *hum) {
+    uint8_t data[5] = {0};
     gpio_set_direction(DHT_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level(DHT_PIN, 0);
     ets_delay_us(2000); 
     gpio_set_level(DHT_PIN, 1);
     ets_delay_us(30);
-
     gpio_set_direction(DHT_PIN, GPIO_MODE_INPUT);
 
-    if (wait_for_state(0, 80) < 0) return false;
-    if (wait_for_state(1, 80) < 0) return false;
-    if (wait_for_state(0, 80) < 0) return false;
+    if (wait_for_state(0, 80) < 0 || wait_for_state(1, 80) < 0 || wait_for_state(0, 80) < 0) return false;
 
     for (int i = 0; i < 40; i++) {
         if (wait_for_state(1, 60) < 0) return false;
         int duration = wait_for_state(0, 100);
         if (duration < 0) return false;
-
         data[i / 8] <<= 1;
-        if (duration > 40) { 
-            data[i / 8] |= 1;
-        }
+        if (duration > 40) data[i / 8] |= 1;
     }
 
-    if (data[4] != ((data[0] + data[1] + data[2] + data[3]) & 0xFF)) {
-        return false;
-    }
+    if (data[4] != ((data[0] + data[1] + data[2] + data[3]) & 0xFF)) return false;
 
-    int16_t t_hum = (data[0] << 8) | data[1];
-    int16_t t_temp = (data[2] << 8) | data[3];
-
-    *humidity = t_hum / 10.0f;
-    *temperature = t_temp / 10.0f;
-
+    *hum = ((data[0] << 8) | data[1]) / 10.0f;
+    *temp = ((data[2] << 8) | data[3]) / 10.0f;
     return true;
 }
 
+// ==========================================
+// FREERTOS TASKS
+// ==========================================
 void sensor_task(void *pvParameters) {
     float temp = 0.0f, hum = 0.0f;
     int raw_light = 0;
     SensorData current_data;
 
     adc_oneshot_unit_handle_t adc1_handle;
-    adc_oneshot_unit_init_cfg_t init_config1 = {
-        .unit_id = ADC_UNIT_1,
-    };
-    adc_oneshot_new_unit(&init_config1, &adc1_handle);
+    adc_oneshot_unit_init_cfg_t init_config = { .unit_id = ADC_UNIT_1 };
+    adc_oneshot_new_unit(&init_config, &adc1_handle);
 
-    adc_oneshot_chan_cfg_t config = {
-        .bitwidth = ADC_BITWIDTH_DEFAULT,
-        .atten = ADC_ATTEN_DB_12,
-    };
+    adc_oneshot_chan_cfg_t config = { .bitwidth = ADC_BITWIDTH_DEFAULT, .atten = ADC_ATTEN_DB_12 };
     adc_oneshot_config_channel(adc1_handle, LDR_CHANNEL, &config);
 
     TickType_t lastWakeTime = xTaskGetTickCount();
 
     for (;;) {
-        // Read sensors
-        bool dht_success = read_dht22(&temp, &hum);
-        adc_oneshot_read(adc1_handle, LDR_CHANNEL, &raw_light);
-        
-        // Populate the struct
-        if (dht_success) {
+        if (read_dht22(&temp, &hum)) {
             current_data.temperature = temp;
             current_data.humidity = hum;
         }
+        adc_oneshot_read(adc1_handle, LDR_CHANNEL, &raw_light);
         current_data.light_percent = (int)((raw_light / 4095.0f) * 100.0f);
 
-        // 3. Send data to the queue
-        if (xQueueSend(sensor_queue, &current_data, pdMS_TO_TICKS(100)) != pdPASS) {
-            printf("Queue full! Dropping data.\n");
-        }
-
+        xQueueSend(sensor_queue, &current_data, pdMS_TO_TICKS(100));
         vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(2000));
     }
 }
 
-// 4. Create a receiver task to verify the queue
 void process_task(void *pvParameters) {
-    SensorData received_data;
+    SensorData data;
+    char buffer[32];
     
     for (;;) {
-        // Wait indefinitely for new data to arrive in the queue
-        if (xQueueReceive(sensor_queue, &received_data, portMAX_DELAY) == pdPASS) {
-            printf("Queue Rx -> Temp: %.1f C | Hum: %.1f %% | Light: %d %%\n", 
-                   received_data.temperature, received_data.humidity, received_data.light_percent);
-            fflush(stdout);
+        if (xQueueReceive(sensor_queue, &data, portMAX_DELAY) == pdPASS) {
+            // Update the OLED Screen using the custom API
+            oled_clear();
+            
+            sprintf(buffer, "Temp: %.1f C", data.temperature);
+            oled_print(0, 0, buffer);
+            
+            sprintf(buffer, "Hum:  %.1f %%", data.humidity);
+            oled_print(0, 2, buffer);
+            
+            sprintf(buffer, "LDR:  %d %%", data.light_percent);
+            oled_print(0, 4, buffer);
         }
     }
 }
 
 void app_main() {
-    printf("BCA152 FreeRTOS Multisensor\n");
-    printf("Initializing System...\n");
-    fflush(stdout);
-
-    // 5. Initialize the Queue to hold up to 5 SensorData items
     sensor_queue = xQueueCreate(5, sizeof(SensorData));
-    if (sensor_queue == NULL) {
-        printf("Failed to create queue!\n");
-        return;
-    }
+    oled_init();
+    oled_clear();
+    oled_print(0, 0, "Booting System...");
 
-    // Launch both tasks
     xTaskCreate(sensor_task, "SensorTask", 2048, NULL, 2, NULL);
     xTaskCreate(process_task, "ProcessTask", 2048, NULL, 1, NULL);
 }
