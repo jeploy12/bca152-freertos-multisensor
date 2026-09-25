@@ -3,8 +3,23 @@
   "author": "Student",
   "editor": "wokwi",
   "parts": [
-    { "type": "board-esp32-devkit-v1", "id": "esp", "top": 0, "left": 0, "attrs": {} }
+    {
+      "type": "wokwi-esp32-devkit-v1",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": {}
+    }
   ],
-  "connections": [],
-  "dependencies": {}
+  "connections": [
+    [ "esp:TX0", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX0", "$serialMonitor:TX", "", [] ]
+  ],
+  "dependencies": {},
+  "serialMonitor": {
+    "display": "terminal",
+    "collapse": false,
+    "convertEol": false,
+    "newline": "lf"
+  }
 }

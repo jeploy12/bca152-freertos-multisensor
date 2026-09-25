@@ -2,17 +2,27 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-void app_main(void)
-{
-    // Must end with \n to flush the line buffer
-    printf("========================================\n");
-    printf("[WOKWI] ESP32 Booted & Printing!\n");
-    printf("========================================\n");
-
-    int counter = 0;
-    while (1) {
-        printf("Heartbeat counter: %d\n", counter++);
-        // Feeds the watchdog and yields CPU
+void task_a(void *pvParameters) {
+    for (;;) {
+        printf("Task A running\n");
+        fflush(stdout);
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
+}
+
+void task_b(void *pvParameters) {
+    for (;;) {
+        printf("Task B running\n");
+        fflush(stdout);
+        vTaskDelay(pdMS_TO_TICKS(1500));
+    }
+}
+
+void app_main() {
+    printf("BCA152 FreeRTOS Multisensor\n");
+    printf("System starting...\n");
+    fflush(stdout);
+
+    xTaskCreate(task_a, "Task A", 2048, NULL, 1, NULL);
+    xTaskCreate(task_b, "Task B", 2048, NULL, 1, NULL);
 }
