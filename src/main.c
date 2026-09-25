@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "driver/gpio.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_timer.h"
@@ -8,6 +9,16 @@
 
 #define DHT_PIN GPIO_NUM_15
 #define LDR_CHANNEL ADC_CHANNEL_6 // GPIO 34 on ADC1
+
+// 1. Define the Data Structure
+typedef struct {
+    float temperature;
+    float humidity;
+    int light_percent;
+} SensorData;
+
+// 2. Declare the Queue Handle globally
+QueueHandle_t sensor_queue;
 
 static int wait_for_state(int state, int timeout_us) {
     int64_t start_time = esp_timer_get_time();
@@ -61,9 +72,8 @@ static bool read_dht22(float *temperature, float *humidity) {
 void sensor_task(void *pvParameters) {
     float temp = 0.0f, hum = 0.0f;
     int raw_light = 0;
-    int light_percent = 0;
+    SensorData current_data;
 
-    // Configure ADC1 using the updated ESP-IDF v5 OneShot API
     adc_oneshot_unit_handle_t adc1_handle;
     adc_oneshot_unit_init_cfg_t init_config1 = {
         .unit_id = ADC_UNIT_1,
@@ -76,33 +86,56 @@ void sensor_task(void *pvParameters) {
     };
     adc_oneshot_config_channel(adc1_handle, LDR_CHANNEL, &config);
 
-    // Initialize the baseline tick count for vTaskDelayUntil
     TickType_t lastWakeTime = xTaskGetTickCount();
 
     for (;;) {
-        // Read DHT22
+        // Read sensors
         bool dht_success = read_dht22(&temp, &hum);
-
-        // Read LDR and convert raw scale to 0-100%
         adc_oneshot_read(adc1_handle, LDR_CHANNEL, &raw_light);
-        light_percent = (int)((raw_light / 4095.0f) * 100.0f);
-
+        
+        // Populate the struct
         if (dht_success) {
-            printf("Temp: %.1f C | Hum: %.1f %% | Light: %d %%\n", temp, hum, light_percent);
-        } else {
-            printf("DHT22 Error | Light: %d %%\n", light_percent);
+            current_data.temperature = temp;
+            current_data.humidity = hum;
         }
-        fflush(stdout);
+        current_data.light_percent = (int)((raw_light / 4095.0f) * 100.0f);
 
-        // Unblock strictly every 2000 ticks relative to the last unblock time
+        // 3. Send data to the queue
+        if (xQueueSend(sensor_queue, &current_data, pdMS_TO_TICKS(100)) != pdPASS) {
+            printf("Queue full! Dropping data.\n");
+        }
+
         vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(2000));
+    }
+}
+
+// 4. Create a receiver task to verify the queue
+void process_task(void *pvParameters) {
+    SensorData received_data;
+    
+    for (;;) {
+        // Wait indefinitely for new data to arrive in the queue
+        if (xQueueReceive(sensor_queue, &received_data, portMAX_DELAY) == pdPASS) {
+            printf("Queue Rx -> Temp: %.1f C | Hum: %.1f %% | Light: %d %%\n", 
+                   received_data.temperature, received_data.humidity, received_data.light_percent);
+            fflush(stdout);
+        }
     }
 }
 
 void app_main() {
     printf("BCA152 FreeRTOS Multisensor\n");
-    printf("Initializing Sensors...\n");
+    printf("Initializing System...\n");
     fflush(stdout);
 
+    // 5. Initialize the Queue to hold up to 5 SensorData items
+    sensor_queue = xQueueCreate(5, sizeof(SensorData));
+    if (sensor_queue == NULL) {
+        printf("Failed to create queue!\n");
+        return;
+    }
+
+    // Launch both tasks
     xTaskCreate(sensor_task, "SensorTask", 2048, NULL, 2, NULL);
+    xTaskCreate(process_task, "ProcessTask", 2048, NULL, 1, NULL);
 }
