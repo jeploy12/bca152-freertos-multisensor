@@ -2,51 +2,126 @@
   "version": 1,
   "author": "Student",
   "editor": "wokwi",
+
   "parts": [
     {
       "type": "wokwi-esp32-devkit-v1",
       "id": "esp",
-      "top": 0,
-      "left": 0,
+      "top": 150,
+      "left": 360,
       "attrs": {}
     },
-    {
-      "type": "wokwi-dht22",
-      "id": "dht1",
-      "top": -120,
-      "left": 140,
-      "attrs": {}
-    },
-    {
-      "type": "wokwi-photoresistor-sensor",
-      "id": "ldr1",
-      "top": 50,
-      "left": 140,
-      "attrs": {}
-    },
+
     {
       "type": "board-ssd1306",
       "id": "oled1",
-      "top": 120,
-      "left": -100,
+      "top": 50,
+      "left": 70,
       "attrs": {}
+    },
+
+    {
+      "type": "wokwi-dht22",
+      "id": "dht1",
+      "top": 50,
+      "left": 650,
+      "attrs": {}
+    },
+
+    {
+      "type": "wokwi-photoresistor-sensor",
+      "id": "ldr1",
+      "top": 330,
+      "left": 70,
+      "attrs": {}
+    },
+
+    {
+      "type": "wokwi-led",
+      "id": "led1",
+      "top": 340,
+      "left": 620,
+      "attrs": {
+        "color": "red"
+      }
+    },
+
+    {
+      "type": "wokwi-buzzer",
+      "id": "bz1",
+      "top": 405,
+      "left": 585,
+      "attrs": {
+        "mode": "accurate",
+        "volume": "1.0"
+      },
+      "rotate": 0
     }
   ],
+
   "connections": [
     [ "esp:TX0", "$serialMonitor:RX", "", [] ],
     [ "esp:RX0", "$serialMonitor:TX", "", [] ],
-    [ "dht1:VCC", "esp:3V3", "red", [ "v0" ] ],
-    [ "dht1:GND", "esp:GND.1", "black", [ "v0" ] ],
-    [ "dht1:SDA", "esp:D15", "green", [ "v0" ] ],
-    [ "ldr1:VCC", "esp:3V3", "red", [ "v0" ] ],
-    [ "ldr1:GND", "esp:GND.2", "black", [ "v0" ] ],
-    [ "ldr1:AO", "esp:D34", "yellow", [ "v0" ] ],
-    [ "oled1:VCC", "esp:3V3", "red", [ "v0" ] ],
-    [ "oled1:GND", "esp:GND.3", "black", [ "v0" ] ],
-    [ "oled1:SDA", "esp:D21", "blue", [ "v0" ] ],
-    [ "oled1:SCL", "esp:D22", "orange", [ "v0" ] ]
+
+    [ "dht1:VCC", "esp:3V3", "red",
+      [ "v55", "h-90", "*", "h100", "v-75" ]
+    ],
+
+    [ "dht1:GND", "esp:GND.1", "black",
+      [ "v75", "h-110", "*", "h100", "v-20" ]
+    ],
+
+    [ "dht1:SDA", "esp:D15", "green",
+      [ "v95", "h-135", "*", "h100", "v15" ]
+    ],
+
+    [ "ldr1:VCC", "esp:3V3", "red",
+      [ "v-55", "h220", "*", "h-80", "v60" ]
+    ],
+
+    [ "ldr1:GND", "esp:GND.2", "black",
+      [ "v45", "h230", "*", "h-80", "v30" ]
+    ],
+
+    [ "ldr1:AO", "esp:D34", "yellow",
+      [ "h185", "*", "h-25" ]
+    ],
+
+    [ "oled1:VCC", "esp:3V3", "red",
+      [ "h130", "v-45", "*", "h-70", "v-55" ]
+    ],
+
+    [ "oled1:GND", "esp:GND.3", "black",
+      [ "h150", "v25", "*", "h-80", "v15" ]
+    ],
+
+    [ "oled1:SDA", "esp:D21", "blue",
+      [ "h170", "v-25", "*", "h-75", "v-5" ]
+    ],
+
+    [ "oled1:SCL", "esp:D22", "orange",
+      [ "h190", "v-5", "*", "h-60", "v-25" ]
+    ],
+
+    [ "led1:A", "esp:D2", "red",
+      [ "h-80", "v-55", "*", "h80", "v30" ]
+    ],
+
+    [ "led1:C", "esp:GND.1", "black",
+      [ "h-100", "v10", "*", "h90", "v45" ]
+    ],
+
+    [ "bz1:2", "esp:D18", "purple",
+      [ "v-70", "h-150", "*", "h80", "v35" ]
+    ],
+
+    [ "bz1:1", "esp:GND.2", "black",
+      [ "v-90", "h-120", "*", "h90", "v70" ]
+    ]
   ],
+
   "dependencies": {},
+
   "serialMonitor": {
     "display": "terminal",
     "collapse": false,

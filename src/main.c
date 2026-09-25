@@ -6,6 +6,7 @@
 #include "driver/gpio.h"
 #include "esp_adc/adc_oneshot.h"
 #include "driver/i2c.h"
+#include "driver/ledc.h"
 #include "esp_timer.h"
 #include "rom/ets_sys.h"
 
@@ -13,6 +14,8 @@
 #define LDR_CHANNEL ADC_CHANNEL_6
 #define I2C_MASTER_NUM I2C_NUM_0
 #define OLED_ADDR 0x3C
+#define ALARM_LED GPIO_NUM_2
+#define ALARM_BUZZER GPIO_NUM_18
 
 typedef struct {
     float temperature;
@@ -59,14 +62,7 @@ void oled_init() {
     i2c_param_config(I2C_MASTER_NUM, &conf);
     i2c_driver_install(I2C_MASTER_NUM, conf.mode, 0, 0, 0);
 
-    uint8_t cmds[] = {
-        0xAE,       // Display OFF
-        0x20, 0x02, // Set Page Addressing Mode
-        0xA1,       // Set Segment Remap (Flips horizontally)
-        0xC8,       // Set COM Scan Direction (Flips vertically)
-        0x8D, 0x14, // Enable charge pump
-        0xAF        // Display ON
-    };
+    uint8_t cmds[] = {0xAE, 0x20, 0x02, 0xA1, 0xC8, 0x8D, 0x14, 0xAF};
     for (int i = 0; i < sizeof(cmds); i++) oled_cmd(cmds[i]);
 }
 
@@ -89,7 +85,7 @@ void oled_print(uint8_t col, uint8_t page, const char *str) {
         int idx = *str - 32;
         if (idx >= 0 && idx < 96) {
             for (int i = 0; i < 5; i++) oled_data(font[idx][i]);
-            oled_data(0x00); // 1 pixel spacing between letters
+            oled_data(0x00);
         }
         str++;
     }
@@ -165,12 +161,54 @@ void sensor_task(void *pvParameters) {
 void process_task(void *pvParameters) {
     SensorData data;
     char buffer[32];
+    bool alarm_active = false; // Tracks if the alarm is already sounding
+    
+    // Initialize Alarm LED
+    gpio_set_direction(ALARM_LED, GPIO_MODE_OUTPUT);
+    
+    // Initialize LEDC for Buzzer in HIGH SPEED MODE
+    ledc_timer_config_t timer_conf = {
+        .speed_mode = LEDC_HIGH_SPEED_MODE,
+        .timer_num = LEDC_TIMER_0,
+        .duty_resolution = LEDC_TIMER_13_BIT,
+        .freq_hz = 2000,
+        .clk_cfg = LEDC_AUTO_CLK
+    };
+    ledc_timer_config(&timer_conf);
+
+    ledc_channel_config_t channel_conf = {
+        .gpio_num = ALARM_BUZZER,
+        .speed_mode = LEDC_HIGH_SPEED_MODE,
+        .channel = LEDC_CHANNEL_0,
+        .intr_type = LEDC_INTR_DISABLE,
+        .timer_sel = LEDC_TIMER_0,
+        .duty = 0,
+        .hpoint = 0
+    };
+    ledc_channel_config(&channel_conf);
     
     for (;;) {
         if (xQueueReceive(sensor_queue, &data, portMAX_DELAY) == pdPASS) {
-            // Update the OLED Screen using the custom API
-            oled_clear();
             
+            // 1. Evaluate Alarm Condition
+            bool trigger_alarm = (data.temperature > 35.0 || data.humidity > 80.0);
+            gpio_set_level(ALARM_LED, trigger_alarm ? 1 : 0);
+            
+            // 2. Only update the Buzzer if the state ACTUALLY changes
+            if (trigger_alarm != alarm_active) {
+                alarm_active = trigger_alarm; // Update the tracker
+                
+                if (trigger_alarm) {
+                    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, 4096);
+                    ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
+                } else {
+                    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, 0);
+                    ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
+                }
+            }
+
+            // 3. Update OLED
+            oled_clear();
             sprintf(buffer, "Temp: %.1f C", data.temperature);
             oled_print(0, 0, buffer);
             
@@ -179,6 +217,10 @@ void process_task(void *pvParameters) {
             
             sprintf(buffer, "LDR:  %d %%", data.light_percent);
             oled_print(0, 4, buffer);
+            
+            if (trigger_alarm) {
+                oled_print(0, 6, "! ALARM ACTIVE !");
+            }
         }
     }
 }
@@ -187,7 +229,7 @@ void app_main() {
     sensor_queue = xQueueCreate(5, sizeof(SensorData));
     oled_init();
     oled_clear();
-    oled_print(0, 0, "Booting System...");
+    oled_print(0, 0, "System Ready");
 
     xTaskCreate(sensor_task, "SensorTask", 2048, NULL, 2, NULL);
     xTaskCreate(process_task, "ProcessTask", 2048, NULL, 1, NULL);
