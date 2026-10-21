@@ -84,7 +84,7 @@ void sensor_task(void *pvParameters) {
                 acc += s;
                 vTaskDelay(pdMS_TO_TICKS(2));
             }
-            current_data.light_percent = (int)(((float)(acc / LDR_AVG_SAMPLES) / 4095.0f) * 100.0f);
+            current_data.light_percent = 100 - (int)(((float)(acc / LDR_AVG_SAMPLES) / 4032.0f) * 100.0f);
             current_data.motion_detected = (bits & EVENT_MOTION_BIT) != 0;
 
             // Publish the shared snapshot; consumers read it under data_mutex
